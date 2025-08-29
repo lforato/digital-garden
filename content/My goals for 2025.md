@@ -1,5 +1,5 @@
 ---
-title: What I want to learn in 2024
+title: My goals for 2025
 publish: "true"
 TODO: "true"
 ---
