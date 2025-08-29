@@ -1,0 +1,135 @@
+name: Waters Deployment From Github To AWS
+on:
+  push:
+    branches:
+      - waters
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    environment: waters
+    steps:
+      - name: Checkout Latest Repo
+        uses: actions/checkout@v4
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::038462752207:role/oidc-github-role-dev
+          role-session-name: github-session-client
+          aws-region: us-east-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Client Docker image to Amazon ECR
+        id: build-image
+        env:
+          REPOSITORY_URI: 038462752207.dkr.ecr.us-east-2.amazonaws.com/ranger-client-waters
+          TAG: ${{ github.sha }}
+          API_URL: https://api.waters.rangerrfx.com/api
+          CLARITY_PROJECT_ID: ${{ secrets.CLARITY_PROJECT_ID_PROD }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY_PROD }}
+          PSPDFKIT_KEY: ${{ secrets.PSPDFKIT_KEY_PROD }}
+          NEXT_PUBLIC_OPENAI_API_KEY: ${{ secrets.NEXT_PUBLIC_OPENAI_API_KEY }}
+          NEXT_PUBLIC_THINKFREE_URL: ${{ secrets.NEXT_PUBLIC_THINKFREE_URL }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+        run: |
+          docker build -t $REPOSITORY_URI:latest \
+            --target production \
+            --build-arg PORT=3000 \
+            --build-arg API_URL=$API_URL \
+            --build-arg CLARITY_PROJECT_ID=$CLARITY_PROJECT_ID \
+            --build-arg GOOGLE_API_KEY=$GOOGLE_API_KEY \
+            --build-arg OPENAI_API_KEY=$NEXT_PUBLIC_OPENAI_API_KEY \
+            --build-arg THINKFREE_URL=$NEXT_PUBLIC_THINKFREE_URL \
+            --build-arg PERPLEXITY_API_KEY=$PERPLEXITY_API_KEY \
+            --build-arg PSPDFKIT_KEY=$PSPDFKIT_KEY \
+            --platform linux/amd64 \
+            client
+          docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$TAG
+          docker push $REPOSITORY_URI:$TAG
+          docker push $REPOSITORY_URI:latest
+          echo "image=$REPOSITORY_URI:$TAG" >> $GITHUB_OUTPUT
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def-client
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: client/task-definition-waters.json
+          container-name: rangerrfx-client
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Client Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-client.outputs.task-definition }}
+          service: client
+          cluster: ranger-waters
+          wait-for-service-stability: true
+
+  server:
+    runs-on: ubuntu-latest
+    environment: waters
+    steps:
+      - name: Checkout Latest Repo
+        uses: actions/checkout@v4
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::038462752207:role/oidc-github-role-dev
+          role-session-name: github-session-server
+          aws-region: us-east-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Server Docker image to Amazon ECR
+        id: build-image
+        env:
+          REPOSITORY_URI: 038462752207.dkr.ecr.us-east-2.amazonaws.com/ranger-server-waters
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REPOSITORY_URI:latest --target production --build-arg PORT=3001 --platform linux/amd64 server
+          docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$TAG
+          docker push $REPOSITORY_URI:$TAG
+          docker push $REPOSITORY_URI:latest
+          echo "image=$REPOSITORY_URI:$TAG" >> $GITHUB_OUTPUT
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def-server
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: server/task-definition-waters.json
+          container-name: rangerrfx-server
+          image: ${{ steps.build-image.outputs.image }}
+
+      # - name: Fill in the migrations command in the Amazon ECS task definition
+      #   id: task-def-migrations
+      #   run: >-
+      #     jq '.containerDefinitions[0].command=["npm", "run", "db:migrate"]' ${{ steps.task-def-server.outputs.task-definition }} > task-definition-migrations.json
+      #     && echo "task-def=task-definition-migrations.json" >> $GITHUB_OUTPUT
+
+      # - name: Run migrations on Amazon ECS
+      #   uses: smitp/amazon-ecs-run-task@v1
+      #   with:
+      #     task-definition: ${{ steps.task-def-migrations.outputs.task-def }}
+      #     cluster: rangerrfx-stg-cluster
+      #     count: 1
+      #     started-by: github-actions-${{ github.actor }}
+      #     wait-for-finish: true
+
+      - name: Deploy Server Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-server.outputs.task-definition }}
+          service: server
+          cluster: ranger-waters
+          wait-for-service-stability: true

@@ -1,53 +1,103 @@
-name: Build and Test
+name: CI
 
 on:
-  pull_request:
-    branches:
-      - v4
+  workflow_dispatch:
   push:
     branches:
-      - v4
+      - main
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
-  build-and-test:
-    if: ${{ github.repository == 'jackyzha0/quartz' }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
+  client:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - name: 'Install dependencies'
+        uses: pnpm/action-setup@v4
         with:
-          node-version: 18
+          version: 10
 
-      - name: Cache dependencies
-        uses: actions/cache@v3
+      - name: 'Setup Node'
+        uses: actions/setup-node@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: client/pnpm-lock.yaml
 
-      - run: npm ci
+      - name: 'Install frontend dependencies'
+        run: cd client && pnpm install
 
-      - name: Check types and style
-        run: npm run check
+      - name: 'Run linter'
+        run: cd client && pnpm run lint
 
-      - name: Test
-        run: npm test
-
-      - name: Ensure Quartz builds, check bundle info
-        run: npx quartz build --bundleInfo
-
-      - name: Create release tag
-        uses: Klemensas/action-autotag@stable
+  server:
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ranger-testdb
+          POSTGRES_PASSWORD: pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
         with:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          tag_prefix: "v"
+          fetch-depth: 0
+
+      - name: 'Install dependencies'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 'Setup Node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: server/pnpm-lock.yaml
+
+      - name: 'Install backend dependencies'
+        run: cd server && pnpm install
+
+      - name: 'Install 7zip'
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: 'Run migrations'
+        run: |
+          cd server
+          pnpm run test:db:migrate
+          pnpm run test:db:seed
+        env:
+          DB_TEST_HOST: localhost
+          DB_TEST_USER: postgres
+          DB_TEST_NAME: ranger-testdb
+          DB_TEST_PORT: 5432
+          DB_TEST_PASSWORD: pass
+          NODE_ENV: test
+
+      - name: 'Run tests'
+        run: |
+          cd server
+          pnpm run test 
+        env:
+          DB_TEST_HOST: localhost
+          DB_TEST_USER: postgres
+          DB_TEST_NAME: ranger-testdb
+          DB_TEST_PORT: 5432
+          DB_TEST_PASSWORD: pass
+          NODE_ENV: test
