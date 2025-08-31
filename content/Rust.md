@@ -1,4 +1,4 @@
 ---
-title: "Untitled 1"
+title: Rust
 publish: "false"
 ---
