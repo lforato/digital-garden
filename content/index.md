@@ -13,4 +13,4 @@ This blog is my way of expressing my thoughts and what I have been learning, as 
 I don't intent this blog to be well written or anything, I want it to actually be a collection of my thoughts, when you read it, you are going to be entering my brain, probably you will find it strange, but that is the idea behind this experiment.
 
 Have fun exploring my source code, I think you should start here:
-- [[My goals for 2025]]
+- [[My goals for 2025 and 2026]]
