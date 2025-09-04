@@ -1,4 +1,7 @@
 ---
 title: Rust
-publish: "false"
+publish: "true"
 ---
+[[Ownership rules]]
+
+[[Structs in Rust]]
